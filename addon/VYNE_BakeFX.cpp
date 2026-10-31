@@ -2,8 +2,6 @@
 // Based on ReShade's BSD-3-Clause/MIT "effects_during_frame" example.
 // This add-on NEVER changes normal gameplay. It only operates with a live
 // BetterVideoExport ASI mapping after the first actual video sample.
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
 #include <Windows.h>
 #include <d3d11.h>
 #include <reshade.hpp>
@@ -68,7 +66,7 @@ namespace {
     LONG RegisterCandidate(nativebake::Shared* p, device* d,
                            resource r, const resource_desc& desc) {
         std::lock_guard<std::mutex> lock(g_candidates);
-        const LONG count = std::min<LONG>(p->candidateCount, nativebake::MaxCandidates);
+        const LONG count = std::min<LONG>(static_cast<LONG>(p->candidateCount), static_cast<LONG>(nativebake::MaxCandidates));
         for (LONG i = 0; i < count; ++i) {
             if (p->candidates[i].resource == r.handle) {
                 InterlockedIncrement(&p->candidates[i].bindCount);
