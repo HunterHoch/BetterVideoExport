@@ -18,6 +18,14 @@ if (Get-Process -Name FiveM*,GTA5* -ErrorAction SilentlyContinue) {
 }
 function Copy-WithBackup([string]$src, [string]$target) {
     if (!(Test-Path -LiteralPath $src -PathType Leaf)) { throw "Missing $src" }
+    # The archive can already be extracted into the destination directory.
+    # Copy-Item fails if the source and destination refer to the same file.
+    $sourceFull = [System.IO.Path]::GetFullPath($src)
+    $targetFull = [System.IO.Path]::GetFullPath($target)
+    if ([string]::Equals($sourceFull, $targetFull, [System.StringComparison]::OrdinalIgnoreCase)) {
+        Write-Host "Already installed (source = destination): $target"
+        return
+    }
     if (Test-Path -LiteralPath $target -PathType Leaf) {
         Copy-Item -LiteralPath $target -Destination ($target + ".backup-" + $stamp) -Force
     }
