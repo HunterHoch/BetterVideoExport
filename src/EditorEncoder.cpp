@@ -15,6 +15,7 @@
 #include "Config.h"
 #include "ImportHook.h"
 #include "EditorTimecycleBlur.h"
+#include "EditorExtraTimecycle.h"
 
 #pragma comment(lib, "mfplat.lib")
 #pragma comment(lib, "mfuuid.lib")
@@ -180,6 +181,7 @@ namespace EditorEncoder
             logging::InfoF("[EditorEncoder] FFmpeg stderr: {}", Narrow(m_finalUrl + L".ffmpeg.log"));
             m_blurSession = true;
             EditorTimecycleBlur::SetExportActive(true);
+            EditorExtraTimecycle::Begin();
 
             if (haveAudio)
                 OpenWav();
@@ -202,6 +204,7 @@ namespace EditorEncoder
             {
                 if ((int)idx == m_videoStream && m_videoPipe)
                 {
+                    EditorExtraTimecycle::NextFrame();
                     if (!m_loggedFirstVideo)
                     {
                         m_loggedFirstVideo = true;
@@ -361,6 +364,7 @@ namespace EditorEncoder
             if (m_blurSession)
             {
                 m_blurSession = false;
+                EditorExtraTimecycle::End();
                 EditorTimecycleBlur::SetExportActive(false);
             }
             if (m_log && m_log != INVALID_HANDLE_VALUE) { CloseHandle(m_log); m_log = nullptr; }
