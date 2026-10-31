@@ -3,6 +3,7 @@
 #define NOMINMAX
 #include <Windows.h>
 #include <cstdint>
+#include <cstddef>
 
 // Identical POD layout in BetterVideoExport.asi and VYNE_BakeFX.addon64.
 // The ASI owns the mapping. Add-on uses OpenFileMappingW, never resets it.
@@ -46,5 +47,32 @@ namespace nativebake {
         volatile LONG lastAppliedSample = -1;
         Candidate candidates[MaxCandidates]{};
     };
-    static_assert(sizeof(Candidate) == 96, "ASI/addon Candidate ABI mismatch");
+    // Independent high-bandwidth GPU-frame transport; metadata bridge stays
+    // small. At most one 4K BGRA8 frame (33.2 MB) is shared between ReShade
+    // and the FFmpeg sink writer. Protected by nonblocking Interlocked lock.
+    inline constexpr DWORD FrameMagic = 0x4D524656; // "VFRM"
+    inline constexpr DWORD FrameVersion = 1;
+    inline constexpr wchar_t FrameMappingName[] = L"Local\\VYNE_BakeFX_Frame_1";
+    inline constexpr DWORD MaxFrameWidth = 3840;
+    inline constexpr DWORD MaxFrameHeight = 2160;
+    inline constexpr size_t MaxBgraBytes =
+        static_cast<size_t>(MaxFrameWidth) * MaxFrameHeight * 4;
+
+    struct FrameShared {
+        DWORD magic = FrameMagic;
+        DWORD version = FrameVersion;
+        volatile LONG busy = 0;
+        volatile LONG ready = 0;
+        volatile LONG sequence = 0;
+        volatile LONG sampleNumber = 0;
+        volatile LONG width = 0;
+        volatile LONG height = 0;
+        volatile LONG bytes = 0;
+        volatile LONG published = 0;
+        volatile LONG consumed = 0;
+        volatile LONG skipped = 0;
+        uint8_t bgra[MaxBgraBytes]{};
+    };
+    static_assert(offsetof(FrameShared, bgra) == 44, "GPU frame ABI alignment mismatch");
+        static_assert(sizeof(Candidate) == 96, "ASI/addon Candidate ABI mismatch");
 }
