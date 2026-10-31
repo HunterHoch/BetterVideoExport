@@ -1,3 +1,5 @@
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
 #include "EditorTimecycleBlur.h"
 #include "Config.h"
 #include "Logging.h"
