@@ -1,0 +1,34 @@
+name: Build FiveM 3788 ASI
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "fx_asi_build.rc"
+      - "premake5.lua"
+      - "src/**"
+      - ".github/workflows/build-asi.yml"
+
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate Visual Studio solution
+        shell: pwsh
+        run: .\\premake5.exe vs2022
+      - uses: microsoft/setup-msbuild@v2
+      - name: Build Release x64 ASI
+        shell: pwsh
+        run: msbuild .\\build\\BetterVideoExport.sln /m /p:Configuration=Release /p:Platform=x64
+      - name: Verify compiled ASI
+        shell: pwsh
+        run: |
+          $built = Get-ChildItem -Recurse -File -Filter BetterVideoExport.asi
+          if (-not $built) { throw "Build produced no BetterVideoExport.asi" }
+          $built | ForEach-Object { Write-Host $_.FullName }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BetterVideoExport-FiveM-3788
+          path: "**/BetterVideoExport.asi"
+          if-no-files-found: error
