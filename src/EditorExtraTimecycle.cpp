@@ -204,7 +204,7 @@ namespace EditorExtraTimecycle
 {
     void Begin()
     {
-        s_enabled = Config::GetUInt(L"MotionBlur", L"EditorExtraTimecycle", 1) != 0;
+        s_enabled = Config::GetUInt(L"MotionBlur", L"EditorExtraTimecycle", 0) != 0;
         if (!s_enabled || !Resolve()) return;
         s_active = true;
         s_pulses = 0;
