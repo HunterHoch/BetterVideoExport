@@ -62,13 +62,15 @@ namespace NativeBakeBridge {
             Config::GetUInt(L"ReShadeBake", L"ApplyEffects", 0));
         s_shared->captureSnapshots = static_cast<LONG>(
             Config::GetUInt(L"ReShadeBake", L"CaptureSnapshots", 0));
+        s_shared->opticalBlur = static_cast<LONG>(
+            Config::GetUInt(L"ReShadeBake", L"OpticalBlur", 0));
         s_shared->targetCandidate = static_cast<LONG>(
             Config::GetUInt(L"ReShadeBake", L"TargetCandidate", 0));
         s_shared->lastAppliedSample = -1;
         InterlockedExchange(&s_shared->active, 1);
-        logging::InfoF("[BakeFX] Export armed {}x{}: addon={}, apply={}, snapshots={}, targetCandidate={} (0=only verified VideoEncode name)",
+        logging::InfoF("[BakeFX] Export armed {}x{}: addon={}, apply={}, snapshots={}, opticalBlur={}, targetCandidate={}",
             w, h, attached, s_shared->applyEffects,
-            s_shared->captureSnapshots, s_shared->targetCandidate);
+            s_shared->captureSnapshots, s_shared->opticalBlur, s_shared->targetCandidate);
     }
 
     void OnVideoSample() {
