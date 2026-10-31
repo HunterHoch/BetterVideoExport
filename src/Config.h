@@ -81,7 +81,14 @@ namespace Config
             "[MotionBlur]\r\n"
             "; Automatically install Normal preset from this bundled ASI into FiveM.app/addons.\r\n"
             "; Set to 0 to stop future installations (remove installed RPF manually to disable blur).\r\n"
-            "AutoInstallNormalPreset=1\r\n";
+            "AutoInstallNormalPreset=1\r\n"
+            "; Experimental fixes are opt-in; keep original gameplay graphics untouched.\r\n"
+            "EditorTimecycleBlur=0\r\n"
+            "EditorExtraTimecycle=0\r\n"
+            "\r\n"
+            "[Capture]\r\n"
+            "; 0=off, 1=EVE DX11 diagnostics ONLY, 2=unsafe legacy frame substitution.\r\n"
+            "EveDx11=0\r\n";
 
         HANDLE h = CreateFileW(IniPath().c_str(), GENERIC_WRITE, 0, nullptr,
                                CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
