@@ -1,4 +1,5 @@
 ﻿#include "Logging.h"
+#include <Windows.h>
 
 namespace logging 
 {
@@ -19,21 +20,32 @@ namespace logging
 
     void Initialize(const char* loggerName, const char* logFile)
     {
+        // FiveM's game subprocess has an unpredictable working directory.
+        // Always write diagnostics to a discoverable location next to the ASI.
+        std::string outputPath = logFile;
+        char localAppData[MAX_PATH] = {};
+        const DWORD count = GetEnvironmentVariableA("LOCALAPPDATA", localAppData, MAX_PATH);
+        if (count > 0 && count < MAX_PATH)
         {
-            std::ofstream(logFile, std::ios::trunc).close();
+            const std::string pluginDir = std::string(localAppData) + "\\FiveM\\FiveM.app\\plugins";
+            const DWORD attributes = GetFileAttributesA(pluginDir.c_str());
+            if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY))
+                outputPath = pluginDir + "\\" + logFile;
         }
 
         std::shared_ptr<spdlog::logger> logger = spdlog::get(loggerName);
         if (!logger)
-        {
-            logger = spdlog::basic_logger_mt(loggerName, logFile);
-        }
+            logger = spdlog::basic_logger_mt(loggerName, outputPath, true);
 
         spdlog::set_default_logger(logger);
         spdlog::set_pattern("[%H:%M:%S] %v");
         spdlog::set_level(spdlog::level::info);
         spdlog::flush_on(spdlog::level::info);
-        spdlog::flush_every(std::chrono::seconds(2));
+        // No asynchronous periodic flush thread required for this diagnostic build.
+        spdlog::info("[Bootstrap] Log file: {}", outputPath);
+        char currentDir[MAX_PATH] = {};
+        if (GetCurrentDirectoryA(MAX_PATH, currentDir))
+            spdlog::info("[Bootstrap] Game working directory: {}", currentDir);
     }
 
     void LogStartupBanner(int gameBuild)
