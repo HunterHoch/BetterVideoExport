@@ -9,6 +9,7 @@ project "BetterVideoExport"
     cppdialect "C++17"
     architecture "x86_64"
     targetextension ".asi"
+    staticruntime "On"   -- avoid requiring the target FiveM process VC++ DLL versions
 
     files { "src/**.cpp", "src/**.c", "src/**.h", "fx_asi_build.rc" }
     includedirs { "src", "src/MinHook", "src/spdlog", "src/hooking" }
