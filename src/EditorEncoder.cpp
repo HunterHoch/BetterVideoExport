@@ -17,6 +17,7 @@
 #include "EditorTimecycleBlur.h"
 #include "EditorExtraTimecycle.h"
 #include "EveDx11Capture.h"
+#include "NativeBakeBridgeApi.h"
 
 #pragma comment(lib, "mfplat.lib")
 #pragma comment(lib, "mfuuid.lib")
@@ -184,6 +185,7 @@ namespace EditorEncoder
             EditorTimecycleBlur::SetExportActive(true);
             EditorExtraTimecycle::Begin();
             EveDx11Capture::Start(m_w, m_h, m_finalUrl);
+            NativeBakeBridge::Begin(m_w, m_h);
 
             if (haveAudio)
                 OpenWav();
@@ -206,6 +208,7 @@ namespace EditorEncoder
             {
                 if ((int)idx == m_videoStream && m_videoPipe)
                 {
+                    NativeBakeBridge::OnVideoSample();
                     EditorExtraTimecycle::NextFrame();
                     if (!m_loggedFirstVideo)
                     {
@@ -373,6 +376,7 @@ namespace EditorEncoder
             if (m_blurSession)
             {
                 m_blurSession = false;
+                NativeBakeBridge::End();
                 EveDx11Capture::Stop();
                 EditorExtraTimecycle::End();
                 EditorTimecycleBlur::SetExportActive(false);
