@@ -62,7 +62,12 @@ namespace Config
             "[Encoder]\r\n"
             "; ffmpeg args used when re-encoding the editor output (requires ffmpeg.exe).\r\n"
             "VideoArgs=-c:v libx264 -preset medium -crf 16 -pix_fmt yuv420p\r\n"
-            "AudioArgs=-c:a aac -b:a 320k\r\n";
+            "AudioArgs=-c:a aac -b:a 320k\r\n"
+            "\r\n"
+            "[MotionBlur]\r\n"
+            "; Automatically install Normal preset from this bundled ASI into FiveM.app/mods.\r\n"
+            "; Set to 0 to stop future installations (remove installed RPF manually to disable blur).\r\n"
+            "AutoInstallNormalPreset=1\r\n";
 
         HANDLE h = CreateFileW(IniPath().c_str(), GENERIC_WRITE, 0, nullptr,
                                CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
