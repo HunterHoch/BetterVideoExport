@@ -84,7 +84,7 @@ EditorExtraTimecycle=1
 
 `EverTarget=0` chooses the last persistent 8-bit color target (or
 an explicitly named VideoEncode target). For a deliberate A/B run
-`EverTarget=4` or `5` uses the observed candidate ordinal, but
+`EverTarget=1` or `2` overrides the ordinal among *color* targets, but
 candidate ordering may differ after a restart and is logged per export.
 
 Allow GTA to run its native 2-3-second bake. A handful of initial frames
@@ -116,3 +116,5 @@ successful compression for confirmed native motion blur or true 1440p.
 Source references:
 - https://github.com/MiffedLyric559/EVER
 - https://github.com/HunterHoch/VYNE
+
+**Candidate index note:** This new native capture registers ONLY eligible 8-bit color render targets. The earlier ReShade add-on enumerated all five surface types, but this implementation normally numbers the two BGRA surfaces 1 and 2. Do not copy indices from the earlier add-on's logs.
