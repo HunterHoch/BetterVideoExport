@@ -14,6 +14,7 @@
 #include "Logging.h"
 #include "Config.h"
 #include "ImportHook.h"
+#include "EditorTimecycleBlur.h"
 
 #pragma comment(lib, "mfplat.lib")
 #pragma comment(lib, "mfuuid.lib")
@@ -100,7 +101,7 @@ namespace EditorEncoder
         ULONG STDMETHODCALLTYPE Release() override
         {
             ULONG r = InterlockedDecrement(&m_ref);
-            if (r == 0) delete this;
+            if (r == 0) { Cleanup(); delete this; }
             return r;
         }
 
@@ -177,6 +178,8 @@ namespace EditorEncoder
             }
             logging::InfoF("[EditorEncoder] encoding {}x{} @ {}/{} fps -> {}", m_w, m_h, m_fpsNum, m_fpsDen, Narrow(m_finalUrl));
             logging::InfoF("[EditorEncoder] FFmpeg stderr: {}", Narrow(m_finalUrl + L".ffmpeg.log"));
+            m_blurSession = true;
+            EditorTimecycleBlur::SetExportActive(true);
 
             if (haveAudio)
                 OpenWav();
@@ -355,6 +358,11 @@ namespace EditorEncoder
 
         void Cleanup()
         {
+            if (m_blurSession)
+            {
+                m_blurSession = false;
+                EditorTimecycleBlur::SetExportActive(false);
+            }
             if (m_log && m_log != INVALID_HANDLE_VALUE) { CloseHandle(m_log); m_log = nullptr; }
         }
 
@@ -368,6 +376,7 @@ namespace EditorEncoder
         HANDLE m_videoPipe = nullptr, m_ffmpeg = nullptr, m_wav = nullptr, m_log = nullptr;
         bool m_failed = false;
         bool m_loggedFirstVideo = false;
+        bool m_blurSession = false;
     };
 
     using MFCreateSinkWriterFromURL_t = HRESULT(STDAPICALLTYPE*)(LPCWSTR, IMFByteStream*, IMFAttributes*, IMFSinkWriter**);
