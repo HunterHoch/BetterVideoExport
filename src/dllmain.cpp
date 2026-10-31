@@ -5,6 +5,7 @@
 #include "Config.h"
 #include "GameVersion.h"
 #include "MotionBlurPreset.h"
+#include "NativeBakeBridgeApi.h"
 
 #include <Windows.h>
 #include <exception>
@@ -25,6 +26,7 @@ static DWORD WINAPI InitializePlugin(LPVOID)
             Config::GetUInt(L"MotionBlur", L"EditorExtraTimecycle", 0),
             Config::GetUInt(L"Capture", L"EveDx11", 0));
         MotionBlurPreset::InstallBundledPreset(g_self);
+        NativeBakeBridge::Initialize();
         HookFunctionBase::RunAll();
         OutputDebugStringA("[BetterVideoExport] Initialization finished.\n");
     }
