@@ -8,8 +8,8 @@
 // The ASI owns the mapping. Add-on uses OpenFileMappingW, never resets it.
 namespace nativebake {
     inline constexpr DWORD Magic = 0x58464256; // "VBFX"
-    inline constexpr DWORD Version = 1;
-    inline constexpr wchar_t MappingName[] = L"Local\\VYNE_BakeFX_1";
+    inline constexpr DWORD Version = 2;
+    inline constexpr wchar_t MappingName[] = L"Local\\VYNE_BakeFX_2";
     inline constexpr unsigned MaxCandidates = 32;
 
     struct Candidate {
@@ -20,6 +20,7 @@ namespace nativebake {
         volatile LONG bindCount = 0;
         volatile LONG appliedCount = 0;
         char debugName[64]{};
+        volatile LONG snapshotStatus = 0; // 0=not attempted, 1=saved, -1=failed
     };
 
     struct Shared {
@@ -30,6 +31,7 @@ namespace nativebake {
         volatile LONG width = 0;
         volatile LONG height = 0;
         volatile LONG applyEffects = 0;   // Default diagnostic only
+        volatile LONG captureSnapshots = 0; // opt-in single-frame GPU evidence
         volatile LONG targetCandidate = 0;// 1-based candidate, zero = auto only if name=VideoEncode
         volatile LONG submittedSamples = 0;
         volatile LONG reshadeAttached = 0;
