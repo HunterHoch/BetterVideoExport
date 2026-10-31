@@ -5,9 +5,12 @@ on:
   push:
     branches:
       - feature/reshade-native-bake
+      - feature/bakefx-gpu-to-nvenc
     paths:
       - "addon/**"
       - "src/NativeBakeBridge.h"
+      - "src/NativeBakeBridge.cpp"
+      - "src/EditorEncoder.cpp"
       - "premake_reshade.lua"
       - ".github/workflows/build-reshade-addon.yml"
 
