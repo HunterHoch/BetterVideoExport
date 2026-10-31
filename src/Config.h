@@ -5,13 +5,25 @@
 
 namespace Config
 {
-    // BetterVideoExport.ini lives next to the GTA executable (same place as ffmpeg.exe).
+    // FiveM hosts GTA in a subprocess whose executable lives in data\cache\subprocess.
+    // Store config next to the ASI instead of next to that transient executable.
+    // Non-FiveM GTA uses the existing executable-directory behavior.
     inline const std::wstring& IniPath()
     {
-        static const std::wstring path = []
+        static const std::wstring path = []() -> std::wstring
         {
-            wchar_t exe[MAX_PATH];
-            DWORD n = GetModuleFileNameW(nullptr, exe, MAX_PATH);
+            wchar_t localAppData[MAX_PATH] = {};
+            const DWORD count = GetEnvironmentVariableW(L"LOCALAPPDATA", localAppData, MAX_PATH);
+            if (count > 0 && count < MAX_PATH)
+            {
+                std::wstring pluginDir = std::wstring(localAppData) + L"\\FiveM\\FiveM.app\\plugins";
+                const DWORD attrs = GetFileAttributesW(pluginDir.c_str());
+                if (attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY))
+                    return pluginDir + L"\\BetterVideoExport.ini";
+            }
+
+            wchar_t exe[MAX_PATH] = {};
+            const DWORD n = GetModuleFileNameW(nullptr, exe, MAX_PATH);
             std::wstring p(exe, n);
             size_t slash = p.find_last_of(L"\\/");
             if (slash != std::wstring::npos) p.resize(slash + 1);
