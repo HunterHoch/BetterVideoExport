@@ -315,7 +315,7 @@ namespace EditorTimecycleBlur
 
     void Initialize()
     {
-        if (Config::GetUInt(L"MotionBlur", L"EditorTimecycleBlur", 1) == 0)
+        if (Config::GetUInt(L"MotionBlur", L"EditorTimecycleBlur", 0) == 0)
         {
             logging::Info("[TimecycleBlur] Disabled by INI");
             return;
