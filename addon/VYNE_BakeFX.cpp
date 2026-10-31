@@ -25,6 +25,133 @@ namespace {
     thread_local bool g_inEffects = false;
     bool g_selectedLogged = false;
     bool g_motionTechniqueLogged = false;
+    HANDLE g_gpuMap = nullptr;
+    nativebake::FrameShared* g_gpu = nullptr;
+    bool g_loggedSourceResolution = false;
+    void ConnectFrameTransport() {
+        if (g_gpu) return;
+        HANDLE handle = OpenFileMappingW(FILE_MAP_ALL_ACCESS, FALSE,
+                                          nativebake::FrameMappingName);
+        if (!handle) return;
+        auto* frames = static_cast<nativebake::FrameShared*>(
+            MapViewOfFile(handle, FILE_MAP_ALL_ACCESS, 0, 0,
+                          sizeof(nativebake::FrameShared)));
+        if (!frames || frames->magic != nativebake::FrameMagic ||
+            frames->version != nativebake::FrameVersion) {
+            if (frames) UnmapViewOfFile(frames);
+            CloseHandle(handle);
+            return;
+        }
+        g_gpuMap = handle;
+        g_gpu = frames;
+        reshade::log::message(reshade::log::level::info,
+            "[VYNE_BakeFX] GPU frame transport connected: post-effects frames will feed FFmpeg");
+    }
+    // Capture original source size at the final offscreen compositor pass.
+    // This makes a 1920x1080 scene upscaled to 2560x1440 diagnosable.
+    void InspectSceneInputs(command_list* cmd) {
+        if (g_loggedSourceResolution || !cmd || !g_shared) return;
+        auto* ctx = reinterpret_cast<ID3D11DeviceContext*>(cmd->get_native());
+        if (!ctx) return;
+        ID3D11ShaderResourceView* views[16]{};
+        ctx->PSGetShaderResources(0, 16, views);
+        unsigned full = 0, upscaled = 0, other = 0;
+        unsigned bigW = 0, bigH = 0;
+        for (auto* view : views) {
+            if (!view) continue;
+            ID3D11Resource* resource = nullptr;
+            view->GetResource(&resource);
+            if (resource) {
+                ID3D11Texture2D* texture = nullptr;
+                if (SUCCEEDED(resource->QueryInterface(__uuidof(ID3D11Texture2D),
+                        reinterpret_cast<void**>(&texture))) && texture) {
+                    D3D11_TEXTURE2D_DESC info{};
+                    texture->GetDesc(&info);
+                    if (info.Width == static_cast<unsigned>(g_shared->width) &&
+                        info.Height == static_cast<unsigned>(g_shared->height))
+                        ++full;
+                    else if (info.Width == 1920 && info.Height == 1080)
+                        ++upscaled;
+                    else ++other;
+                    if (info.Width > bigW) {bigW = info.Width;bigH = info.Height;}
+                    texture->Release();
+                }
+                resource->Release();
+            }
+            view->Release();
+        }
+        char msg[256];
+        std::snprintf(msg,sizeof(msg),
+            "[VYNE_BakeFX] GPU compositing inputs: export=%ldx%ld, full-res SRVs=%u, 1080p SRVs=%u, other=%u, widest=%ux%u",
+            g_shared->width, g_shared->height,full,upscaled,other,bigW,bigH);
+        reshade::log::message(reshade::log::level::info,msg);
+        g_loggedSourceResolution = true;
+    }
+
+    bool PublishGpuFrame(command_list* cmd, resource source, LONG sample) {
+        ConnectFrameTransport();
+        if (!g_gpu || source.handle < 0x10000 || !cmd ||
+            !g_shared || !g_shared->active) return false;
+        if (InterlockedCompareExchange(&g_gpu->busy, 1, 0) != 0) {
+            InterlockedIncrement(&g_gpu->skipped);
+            return false;
+        }
+        bool published = false;
+        do {
+            auto* textureResource = reinterpret_cast<ID3D11Resource*>(source.handle);
+            ID3D11Texture2D* src = nullptr;
+            if (FAILED(textureResource->QueryInterface(__uuidof(ID3D11Texture2D),
+                reinterpret_cast<void**>(&src))) || !src) break;
+            D3D11_TEXTURE2D_DESC desc{};
+            src->GetDesc(&desc);
+            const auto bytes = static_cast<size_t>(desc.Width)*desc.Height*4;
+            if ((desc.Format != DXGI_FORMAT_B8G8R8A8_UNORM &&
+                 desc.Format != DXGI_FORMAT_B8G8R8A8_UNORM_SRGB) ||
+                !desc.Width || !desc.Height || !g_shared ||
+                desc.Width != static_cast<unsigned>(g_shared->width) ||
+                desc.Height != static_cast<unsigned>(g_shared->height) ||
+                bytes > nativebake::MaxBgraBytes ||
+                desc.SampleDesc.Count != 1 || desc.ArraySize != 1) {
+                src->Release(); break;
+            }
+            auto* ctx = reinterpret_cast<ID3D11DeviceContext*>(cmd->get_native());
+            ID3D11Device* device = nullptr;
+            src->GetDevice(&device);
+            if (!ctx || !device) {if(device) device->Release();src->Release();break;}
+            D3D11_TEXTURE2D_DESC stagingDesc=desc;
+            stagingDesc.Usage=D3D11_USAGE_STAGING;
+            stagingDesc.BindFlags=0;
+            stagingDesc.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
+            stagingDesc.MiscFlags=0;
+            ID3D11Texture2D* staging=nullptr;
+            if (SUCCEEDED(device->CreateTexture2D(&stagingDesc,nullptr,&staging)) && staging) {
+                ctx->CopyResource(staging,src);
+                D3D11_MAPPED_SUBRESOURCE mapped{};
+                if (SUCCEEDED(ctx->Map(staging,0,D3D11_MAP_READ,0,&mapped))) {
+                    for (unsigned y=0;y<desc.Height;++y) {
+                        const auto* row=static_cast<const uint8_t*>(mapped.pData)+
+                            static_cast<size_t>(y)*mapped.RowPitch;
+                        std::memcpy(g_gpu->bgra+static_cast<size_t>(y)*desc.Width*4,
+                                    row,static_cast<size_t>(desc.Width)*4);
+                    }
+                    ctx->Unmap(staging,0);
+                    g_gpu->width=desc.Width;
+                    g_gpu->height=desc.Height;
+                    g_gpu->bytes=static_cast<LONG>(bytes);
+                    g_gpu->sampleNumber=sample;
+                    InterlockedIncrement(&g_gpu->sequence);
+                    InterlockedExchange(&g_gpu->ready,1);
+                    InterlockedIncrement(&g_gpu->published);
+                    published=true;
+                }
+                staging->Release();
+            }
+            device->Release();
+            src->Release();
+        } while(false);
+        InterlockedExchange(&g_gpu->busy,0);
+        return published;
+    }
 
     struct __declspec(uuid("ea908491-c2da-4d0f-b80d-d14985bf1a9f")) CommandState {
         resource_view currentRTV{0};
@@ -318,12 +445,15 @@ namespace {
             }
         }
 
+        InspectSceneInputs(cmd);
         runtime->render_effects(cmd, oldView, oldView);
         if (restoreTechnique)
             runtime->set_technique_state(blurTechnique, false);
         if (const auto* previousState = cmd->get_private_data<state_tracking>())
             previousState->apply(cmd);
         g_inEffects = false;
+        const bool published=PublishGpuFrame(cmd,r,sample);
+        if (!published && g_gpu) InterlockedIncrement(&g_gpu->skipped);
         InterlockedIncrement(&p->effectsApplied);
         InterlockedIncrement(&p->candidates[candidate - 1].appliedCount);
     }
@@ -355,6 +485,7 @@ namespace {
 
     void Present(effect_runtime* runtime) {
         if (g_shared && !g_shared->active) {
+            g_loggedSourceResolution = false;
             g_selectedLogged = false;
             g_motionTechniqueLogged = false;
         }
@@ -382,6 +513,8 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
         state_tracking::unregister_events();
         if (g_shared) { UnmapViewOfFile(g_shared); g_shared = nullptr; }
         if (g_fileMap) { CloseHandle(g_fileMap); g_fileMap = nullptr; }
+        if (g_gpu) { UnmapViewOfFile(g_gpu); g_gpu = nullptr; }
+        if (g_gpuMap) { CloseHandle(g_gpuMap); g_gpuMap = nullptr; }
     }
     return TRUE;
 }
