@@ -1,3 +1,54 @@
+# VYNE BakeFX: best-effort ReShade + optical motion blur for Rockstar Editor
+
+**Current build is an experimental automatic integration, not a verified FiveM fix.**
+The add-on now waits 12 native video samples and automatically chooses the
+highest-index persistent BGRA8 offscreen target (candidate #5 in the observed
+3788 bake). It invokes ReShade's preset on that target and temporarily enables
+the included `VYNE_ExportMotion.fx` technique for each selected export frame.
+The shader estimates motion from the prior native frame while sampling only
+the current frame for the blurred output. This is NOT native GTA vector blur,
+does NOT scrub replays, and does NOT accumulate rendered scene frames.
+
+**Install:** Extract `BetterVideoExport.asi`, `VYNE_BakeFX.addon64` and
+`VYNE_ExportMotion.fx`, then run `Install-VYNEBakeFX.ps1` from PowerShell
+after closing FiveM. The installer finds the prior working add-on, places
+the FX shader in an existing ReShade shader folder and updates only relevant
+INI keys, backing up the previous files. Alternatively, install manually.
+
+Required settings:
+
+```ini
+[ReShadeBake]
+Enable=1
+ApplyEffects=1
+OpticalBlur=1
+CaptureSnapshots=0
+TargetCandidate=0
+
+[Capture]
+EveDx11=0
+
+[MotionBlur]
+EditorTimecycleBlur=0
+EditorExtraTimecycle=0
+```
+
+`TargetCandidate=0` now means **automatic last BGRA8 target**, not merely
+an explicitly debug-named `VideoEncode` resource. To force a known resource
+from the log, set `TargetCandidate=4` or `5` for that run. If the export
+becomes corrupt or UI-stained, immediately restore the backups or set
+`[ReShadeBake] ApplyEffects=0`.
+
+**Limitations:** There is no tested proof that the chosen BGRA surface feeds
+GTA's final NV12 encoder input. Real runtime validation is still required;
+the optical-flow approximation can misestimate motion around edges, cannot
+recover physically correct per-object velocity, and depends on the shader
+loading in the user's ReShade effect search path. No code here can guarantee
+motion blur during export until that render path is tested. Main branch
+remains untouched.
+
+---
+
 # VYNE_BakeFX native Rockstar Editor rendering integration
 
 This is an **experimental, opt-in ReShade add-on** built from ReShade's official
