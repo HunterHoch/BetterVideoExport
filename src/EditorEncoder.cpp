@@ -25,6 +25,7 @@ namespace EditorEncoder
     static std::wstring kAudioEncodeArgs = L"-c:a aac -b:a 320k";
 
     static std::wstring g_ffmpegPath;   // empty => feature off, pass through to stock encoder
+    static bool g_warnedNoFFmpeg = false;
 
     static std::string Narrow(const std::wstring& w)
     {
@@ -120,18 +121,25 @@ namespace EditorEncoder
             {
                 MFGetAttributeSize(input, MF_MT_FRAME_SIZE, &m_w, &m_h);
                 MFGetAttributeRatio(input, MF_MT_FRAME_RATE, &m_fpsNum, &m_fpsDen);
+                GUID subtype = GUID_NULL;
+                input->GetGUID(MF_MT_SUBTYPE, &subtype);
+                logging::InfoF("[EditorEncoder] Video media type: {}x{} @ {}/{}, NV12={}, stream={}",
+                    m_w, m_h, m_fpsNum, m_fpsDen, subtype == MFVideoFormat_NV12, idx);
             }
             else if ((int)idx == m_audioStream)
             {
                 input->GetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, &m_sampleRate);
                 input->GetUINT32(MF_MT_AUDIO_NUM_CHANNELS, &m_channels);
                 input->GetUINT32(MF_MT_AUDIO_BITS_PER_SAMPLE, &m_bits);
+                logging::InfoF("[EditorEncoder] Audio media type: {}Hz, {} channels, {} bits, stream={}",
+                    m_sampleRate, m_channels, m_bits, idx);
             }
             return S_OK;
         }
 
         HRESULT STDMETHODCALLTYPE BeginWriting() override
         {
+            logging::InfoF("[EditorEncoder] BeginWriting: video={}x{}, fps={}/{}, audio stream={}", m_w, m_h, m_fpsNum, m_fpsDen, m_audioStream);
             if (m_w == 0 || m_h == 0 || m_fpsNum == 0)
             {
                 logging::ErrorF("[EditorEncoder] missing video format (w={} h={} fps={}/{})", m_w, m_h, m_fpsNum, m_fpsDen);
@@ -158,6 +166,7 @@ namespace EditorEncoder
                 L" -framerate " + std::to_wstring(m_fpsNum) + L"/" + std::to_wstring(m_fpsDen) +
                 L" -i pipe:0 " + kVideoEncodeArgs + L" \"" + m_videoOut + L"\"";
 
+            logging::InfoF("[EditorEncoder] FFmpeg command: {}", Narrow(cmd));
             m_ffmpeg = SpawnFfmpeg(cmd, rd, m_log);
             CloseHandle(rd); // child owns its copy
             if (!m_ffmpeg)
@@ -166,6 +175,7 @@ namespace EditorEncoder
                 return E_FAIL;
             }
             logging::InfoF("[EditorEncoder] encoding {}x{} @ {}/{} fps -> {}", m_w, m_h, m_fpsNum, m_fpsDen, Narrow(m_finalUrl));
+            logging::InfoF("[EditorEncoder] FFmpeg stderr: {}", Narrow(m_finalUrl + L".ffmpeg.log"));
 
             if (haveAudio)
                 OpenWav();
@@ -188,6 +198,14 @@ namespace EditorEncoder
             {
                 if ((int)idx == m_videoStream && m_videoPipe)
                 {
+                    if (!m_loggedFirstVideo)
+                    {
+                        m_loggedFirstVideo = true;
+                        const unsigned long long expected = (unsigned long long)m_w * m_h * 3 / 2;
+                        logging::InfoF("[EditorEncoder] First NV12 sample: {} bytes, expected {} bytes", curLen, expected);
+                        if (curLen != expected)
+                            logging::Warning("[EditorEncoder] Frame length differs from tightly packed NV12. FFmpeg may reject these samples.");
+                    }
                     if (!WriteAll(m_videoPipe, data, curLen))
                     {
                         logging::ErrorF("[EditorEncoder] video pipe write failed (ffmpeg died?)");
@@ -203,6 +221,8 @@ namespace EditorEncoder
                 buf->Unlock();
             }
             buf->Release();
+            if (m_failed)
+                logging::Error("[EditorEncoder] WriteSample returning E_FAIL; inspect *.ffmpeg.log alongside the output.");
             return m_failed ? E_FAIL : S_OK;
         }
 
@@ -300,6 +320,11 @@ namespace EditorEncoder
             if (m_ffmpeg)
             {
                 WaitForSingleObject(m_ffmpeg, INFINITE);
+                DWORD exitCode = STILL_ACTIVE;
+                if (GetExitCodeProcess(m_ffmpeg, &exitCode))
+                    logging::InfoF("[EditorEncoder] FFmpeg video process exited: {}", exitCode);
+                if (exitCode != 0)
+                    logging::ErrorF("[EditorEncoder] Video encoder failed (exit {}). Read the .ffmpeg.log next to your output.", exitCode);
                 CloseHandle(m_ffmpeg); m_ffmpeg = nullptr;
             }
         }
@@ -318,6 +343,7 @@ namespace EditorEncoder
         UINT32 m_wavBytes = 0;
         HANDLE m_videoPipe = nullptr, m_ffmpeg = nullptr, m_wav = nullptr, m_log = nullptr;
         bool m_failed = false;
+        bool m_loggedFirstVideo = false;
     };
 
     using MFCreateSinkWriterFromURL_t = HRESULT(STDAPICALLTYPE*)(LPCWSTR, IMFByteStream*, IMFAttributes*, IMFSinkWriter**);
@@ -325,16 +351,44 @@ namespace EditorEncoder
 
     static HRESULT STDAPICALLTYPE Hooked_Create(LPCWSTR url, IMFByteStream* bs, IMFAttributes* attr, IMFSinkWriter** out)
     {
-        if (out && url && !g_ffmpegPath.empty() && EndsWithI(url, L".mp4"))
+        if (url && EndsWithI(url, L".mp4"))
         {
-            *out = new ShimSinkWriter(url);
-            return S_OK;
+            logging::InfoF("[EditorEncoder] MP4 export requested: {}", Narrow(url));
+            if (out && !g_ffmpegPath.empty())
+            {
+                logging::Info("[EditorEncoder] Using FFmpeg sink writer");
+                *out = new ShimSinkWriter(url);
+                return S_OK;
+            }
+            logging::Error("[EditorEncoder] FFmpeg is unavailable: FALLING BACK to GTA's native H.264 encoder. 4K60 may fail.");
         }
-        return g_origCreate(url, bs, attr, out);
+        const HRESULT hr = g_origCreate(url, bs, attr, out);
+        if (FAILED(hr))
+            logging::ErrorF("[EditorEncoder] Native MFCreateSinkWriterFromURL failed HRESULT=0x{:08X}", (unsigned int)hr);
+        return hr;
     }
 
     static std::wstring FindFfmpeg()
     {
+        // FiveM often runs from FiveM.app, not the GTA V installation folder.
+        // An explicit path is preferred to avoid silently switching to native H.264.
+        const std::wstring configured = Config::GetStr(L"Encoder", L"FFmpegPath", L"");
+        if (!configured.empty())
+        {
+            if (GetFileAttributesW(configured.c_str()) != INVALID_FILE_ATTRIBUTES)
+                return configured;
+            logging::ErrorF("[EditorEncoder] FFmpegPath does not exist: {}", Narrow(configured));
+            return {};
+        }
+
+        wchar_t localAppData[MAX_PATH] = {};
+        if (GetEnvironmentVariableW(L"LOCALAPPDATA", localAppData, MAX_PATH))
+        {
+            const std::wstring plugins = std::wstring(localAppData) + L"\\FiveM\\FiveM.app\\plugins\\ffmpeg.exe";
+            if (GetFileAttributesW(plugins.c_str()) != INVALID_FILE_ATTRIBUTES)
+                return plugins;
+        }
+
         wchar_t exe[MAX_PATH];
         if (GetModuleFileNameW(nullptr, exe, MAX_PATH))
         {
@@ -363,11 +417,11 @@ namespace EditorEncoder
         kVideoEncodeArgs = Config::GetStr(L"Encoder", L"VideoArgs", kVideoEncodeArgs.c_str());
         kAudioEncodeArgs = Config::GetStr(L"Encoder", L"AudioArgs", kAudioEncodeArgs.c_str());
 
+        logging::InfoF("[EditorEncoder] Active INI path: {}", Narrow(Config::IniPath()));
         g_ffmpegPath = FindFfmpeg();
         if (g_ffmpegPath.empty())
         {
-            logging::Warning("[EditorEncoder] ffmpeg.exe not found (PATH or GTA folder) - "
-                             "4K/high-fps editor export disabled; stock encoder will be used.");
+            logging::Error("[EditorEncoder] FFmpeg NOT FOUND. Place ffmpeg.exe in FiveM.app\\plugins, set [Encoder] FFmpegPath=, or add it to PATH. Native encoder fallback will likely fail at 4K60.");
             return;
         }
         logging::InfoF("[EditorEncoder] using ffmpeg: {}", Narrow(g_ffmpegPath));
