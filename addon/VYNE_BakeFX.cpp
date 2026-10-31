@@ -23,6 +23,8 @@ namespace {
     std::mutex g_candidates;
     std::atomic<effect_runtime*> g_runtime{nullptr};
     thread_local bool g_inEffects = false;
+    bool g_selectedLogged = false;
+    bool g_motionTechniqueLogged = false;
 
     struct __declspec(uuid("ea908491-c2da-4d0f-b80d-d14985bf1a9f")) CommandState {
         resource_view currentRTV{0};
@@ -245,10 +247,39 @@ namespace {
                         "[VYNE_BakeFX] GPU snapshot failed; original export unaffected");
             }
         }
-        if (!p->applyEffects) return;
+        if (!p->applyEffects || p->submittedSamples < 12) return;
+
+        // In the observed GTA 3788 native bake, five output-size resources
+        // bind exactly once per encoded frame. The final two are 8-bit BGRA.
+        // Best-effort production policy: prefer the LAST eligible 8-bit
+        // color target. Never inject into R8, RG16F, RGBA16F or the
+        // presented swapchain. Manual candidate always overrides this.
+        if (!p->targetCandidate) {
+            LONG selected = 0;
+            const LONG total = std::min<LONG>(
+                static_cast<LONG>(p->candidateCount),
+                static_cast<LONG>(nativebake::MaxCandidates));
+            for (LONG i = 0; i < total; ++i) {
+                const auto& entry = p->candidates[i];
+                if (entry.format == static_cast<LONG>(format::b8g8r8a8_unorm) &&
+                    entry.width == p->width && entry.height == p->height &&
+                    entry.bindCount >= 8)
+                    selected = i + 1;
+            }
+            if (selected && selected != p->autoTarget)
+                InterlockedExchange(&p->autoTarget, selected);
+            if (selected && !g_selectedLogged) {
+                g_selectedLogged = true;
+                char message[192];
+                std::snprintf(message, sizeof(message),
+                    "[VYNE_BakeFX] AUTO selected final BGRA candidate #%ld after 12 actual samples (experimental).",
+                    selected);
+                reshade::log::message(reshade::log::level::info, message);
+            }
+        }
 
         const LONG wanted = p->targetCandidate ? p->targetCandidate : p->autoTarget;
-        if (candidate != wanted) return;
+        if (!wanted || candidate != wanted) return;
 
         // At most one effects pass between two successive Rockstar
         // Media Foundation video samples. This adds no world scene render.
@@ -261,7 +292,35 @@ namespace {
         if (InterlockedExchange(&p->lastAppliedSample, sample) == sample)
             return;
         g_inEffects = true;
+
+        // Custom optical-flow blur uses two consecutive NATIVE BAKE frames,
+        // not repeated GTA renders and not replay scrubbing. Enable only for
+        // this render_effects call, so regular DXGI presents don't advance
+        // its history or contaminate the exported sample cadence.
+        effect_technique blurTechnique{0};
+        bool restoreTechnique = false;
+        if (p->opticalBlur) {
+            blurTechnique = runtime->find_technique(
+                "VYNE_ExportMotion.fx", "VYNE_ExportMotion");
+            if (blurTechnique != 0) {
+                restoreTechnique = !runtime->get_technique_state(blurTechnique);
+                if (restoreTechnique) runtime->set_technique_state(blurTechnique, true);
+                if (!g_motionTechniqueLogged) {
+                    g_motionTechniqueLogged = true;
+                    reshade::log::message(reshade::log::level::info,
+                        "[VYNE_BakeFX] Export-only optical-flow blur technique active");
+                }
+            }
+            else if (!g_motionTechniqueLogged) {
+                g_motionTechniqueLogged = true;
+                reshade::log::message(reshade::log::level::warning,
+                    "[VYNE_BakeFX] VYNE_ExportMotion.fx not found; rendering existing preset without extra blur");
+            }
+        }
+
         runtime->render_effects(cmd, oldView, oldView);
+        if (restoreTechnique)
+            runtime->set_technique_state(blurTechnique, false);
         if (const auto* previousState = cmd->get_private_data<state_tracking>())
             previousState->apply(cmd);
         g_inEffects = false;
@@ -295,6 +354,10 @@ namespace {
     }
 
     void Present(effect_runtime* runtime) {
+        if (g_shared && !g_shared->active) {
+            g_selectedLogged = false;
+            g_motionTechniqueLogged = false;
+        }
         if (runtime != g_runtime.load()) return;
         if (!g_shared) Connect();
         if (g_shared && g_shared->active)
