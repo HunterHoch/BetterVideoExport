@@ -35,6 +35,7 @@ API on the GPU render pass itself.
    [ReShadeBake]
    Enable=1
    ApplyEffects=0
+   CaptureSnapshots=1
    TargetCandidate=0
 
    [Capture]
@@ -57,6 +58,26 @@ API on the GPU render pass itself.
 
 If `addon=0`, the ReShade module was not loaded, the wrong ReShade build
 was installed, or the mapping connection failed.
+
+## GPU candidate snapshots (native bake diagnostic)
+
+With `[ReShadeBake] CaptureSnapshots=1` and `ApplyEffects=0`, the add-on
+takes exactly one read-only GPU snapshot for every output-size 8-bit BGRA
+candidate, after at least ten genuine Rockstar video samples. It writes:
+
+```text
+%LOCALAPPDATA%\FiveM\FiveM.app\plugins\VYNE_BakeFX_candidate4_sample10.bmp
+%LOCALAPPDATA%\FiveM\FiveM.app\plugins\VYNE_BakeFX_candidate5_sample10.bmp
+```
+
+The specific sample number may be higher than 10, but it is logged by
+ReShade. The video encoder receives its original unmodified NV12 frames.
+The BMPs identify which of the two 8-bit BGRA render targets contains
+the actual game scene, rather than guessing by resolution and type.
+
+Take `BetterVideoExport.log` and the two BMPs from the same export.
+This uses one GPU readback per candidate, which can briefly stall the
+render thread, but creates no extra scene frames.
 
 ## Controlled effect test after resource identification
 
