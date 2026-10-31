@@ -3,6 +3,7 @@
 #include "EveDx11Capture.h"
 #include "Config.h"
 #include "Logging.h"
+#include <Hooking.h>
 #include <d3d11.h>
 #include <dxgi.h>
 #include <algorithm>
