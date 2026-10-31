@@ -43,5 +43,5 @@ namespace nativebake {
         volatile LONG lastAppliedSample = -1;
         Candidate candidates[MaxCandidates]{};
     };
-    static_assert(sizeof(Candidate) == 88, "ASI/addon Candidate ABI mismatch");
+    static_assert(sizeof(Candidate) == 96, "ASI/addon Candidate ABI mismatch");
 }
