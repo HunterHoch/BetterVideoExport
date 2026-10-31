@@ -2,6 +2,7 @@
 #include "EditorEncoder.h"
 #include "EditorExport.h"
 #include "Logging.h"
+#include "Config.h"
 #include "GameVersion.h"
 #include "MotionBlurPreset.h"
 
@@ -18,6 +19,11 @@ static DWORD WINAPI InitializePlugin(LPVOID)
     {
         logging::Initialize("BetterVideoExport", "BetterVideoExport.log");
         logging::LogStartupBanner(gameversion::GetGameBuild());
+        logging::InfoF("[Settings] Active INI: {}", std::string(Config::IniPath().begin(), Config::IniPath().end()));
+        logging::InfoF("[Settings] Effective overrides: EditorTimecycleBlur={}, EditorExtraTimecycle={}, EveDx11={}",
+            Config::GetUInt(L"MotionBlur", L"EditorTimecycleBlur", 0),
+            Config::GetUInt(L"MotionBlur", L"EditorExtraTimecycle", 0),
+            Config::GetUInt(L"Capture", L"EveDx11", 0));
         MotionBlurPreset::InstallBundledPreset(g_self);
         HookFunctionBase::RunAll();
         OutputDebugStringA("[BetterVideoExport] Initialization finished.\n");
