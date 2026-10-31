@@ -145,22 +145,43 @@ namespace MotionBlurPreset
             logging::Warning("[MotionBlur] No valid bundled RPF payload found. Exporter unaffected.");
             return;
         }
-        std::wstring root(modulePath, at);
-        const std::wstring mods = root + L"\\mods";
-        const std::wstring target = mods + L"\\zz_VYNE_MotionBlur.rpf";
-        if (SameFile(target, payload))
+        const std::wstring root(modulePath, at);
+        // FiveM 'mods' expects an OIV package with assembly.xml + content/.
+        // This bundled RPF is a raw common/ file overlay and belongs in 'addons'.
+        const std::wstring addons = root + L"\\addons";
+        const std::wstring target = addons + L"\\zz_VYNE_MotionBlur.rpf";
+        const std::wstring oldTarget = root + L"\\mods\\zz_VYNE_MotionBlur.rpf";
+
+        if (!CreateDirectoryW(addons.c_str(), nullptr) && GetLastError() != ERROR_ALREADY_EXISTS)
         {
-            logging::Info("[MotionBlur] Normal preset is already installed.");
+            logging::Warning("[MotionBlur] Failed to create FiveM addons directory.");
             return;
         }
-        if (!CreateDirectoryW(mods.c_str(), nullptr) && GetLastError() != ERROR_ALREADY_EXISTS)
+
+        bool installed = SameFile(target, payload);
+        if (!installed)
         {
-            logging::Warning("[MotionBlur] Failed to create FiveM mods directory.");
-            return;
+            if (!WritePreset(target, payload))
+            {
+                logging::Warning("[MotionBlur] Could not install raw graphics RPF in FiveM addons. Exporter remains usable.");
+                return;
+            }
+            installed = true;
+            logging::Info("[MotionBlur] Normal preset raw RPF installed in FiveM addons; restart FiveM before testing.");
         }
-        if (WritePreset(target, payload))
-            logging::Info("[MotionBlur] Normal preset installed in FiveM mods. Restart FiveM to activate it in Rockstar Editor.");
         else
-            logging::Warning("[MotionBlur] Could not install Normal preset. Exporter remains usable.");
+        {
+            logging::Info("[MotionBlur] Normal preset RPF present in FiveM addons (mounting not independently verified).");
+        }
+
+        // Remove only an exact byte-for-byte copy of our former, inert 'mods' package.
+        // Never delete arbitrary user-owned graphics packs.
+        if (installed && SameFile(oldTarget, payload))
+        {
+            if (DeleteFileW(oldTarget.c_str()))
+                logging::Info("[MotionBlur] Removed obsolete raw RPF from FiveM mods.");
+            else
+                logging::Warning("[MotionBlur] Could not remove obsolete mods copy (delete it manually if necessary).");
+        }
     }
 }
