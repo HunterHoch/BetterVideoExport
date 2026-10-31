@@ -16,6 +16,7 @@
 #include "ImportHook.h"
 #include "EditorTimecycleBlur.h"
 #include "EditorExtraTimecycle.h"
+#include "EveDx11Capture.h"
 
 #pragma comment(lib, "mfplat.lib")
 #pragma comment(lib, "mfuuid.lib")
@@ -182,6 +183,7 @@ namespace EditorEncoder
             m_blurSession = true;
             EditorTimecycleBlur::SetExportActive(true);
             EditorExtraTimecycle::Begin();
+            EveDx11Capture::Start(m_w, m_h, m_finalUrl);
 
             if (haveAudio)
                 OpenWav();
@@ -236,9 +238,16 @@ namespace EditorEncoder
                                     GetLastError());
                         }
                     }
-                    if (!WriteAll(m_videoPipe, data, curLen))
+                    // EVE-style mode: prefer the post-present GPU backbuffer
+                    // instead of GTA's pre-ReShade NV12 export sample. Keep the
+                    // original byte-exact input as fallback on any mismatch.
+                    std::vector<std::uint8_t> processed;
+                    const bool captured = EveDx11Capture::Consume(processed) &&
+                                          processed.size() == curLen;
+                    const BYTE* input = captured ? processed.data() : data;
+                    if (!WriteAll(m_videoPipe, input, curLen))
                     {
-                        logging::ErrorF("[EditorEncoder] video pipe write failed (ffmpeg died?)");
+                        logging::Error("[EditorEncoder] video pipe write failed (ffmpeg died?)");
                         m_failed = true;
                     }
                 }
@@ -364,6 +373,7 @@ namespace EditorEncoder
             if (m_blurSession)
             {
                 m_blurSession = false;
+                EveDx11Capture::Stop();
                 EditorExtraTimecycle::End();
                 EditorTimecycleBlur::SetExportActive(false);
             }
