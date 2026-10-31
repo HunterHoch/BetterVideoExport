@@ -17,6 +17,7 @@
 #include "EditorTimecycleBlur.h"
 #include "EditorExtraTimecycle.h"
 #include "EveDx11Capture.h"
+#include "EverOnePass.h"
 
 #pragma comment(lib, "mfplat.lib")
 #pragma comment(lib, "mfuuid.lib")
@@ -184,6 +185,7 @@ namespace EditorEncoder
             EditorTimecycleBlur::SetExportActive(true);
             EditorExtraTimecycle::Begin();
             EveDx11Capture::Start(m_w, m_h, m_finalUrl);
+            EverOnePass::Begin(m_w, m_h, m_finalUrl);
 
             if (haveAudio)
                 OpenWav();
@@ -206,6 +208,7 @@ namespace EditorEncoder
             {
                 if ((int)idx == m_videoStream && m_videoPipe)
                 {
+                    EverOnePass::OnVideoSample();
                     EditorExtraTimecycle::NextFrame();
                     if (!m_loggedFirstVideo)
                     {
@@ -238,13 +241,17 @@ namespace EditorEncoder
                                     GetLastError());
                         }
                     }
-                    // EVE-style mode: prefer the post-present GPU backbuffer
-                    // instead of GTA's pre-ReShade NV12 export sample. Keep the
-                    // original byte-exact input as fallback on any mismatch.
+                    // EVER-style direct GPU texture readback, one completed
+                    // scene frame per native WriteSample. No Present(),
+                    // accumulation buffer, or replay seeking. Native NV12
+                    // remains the exact-byte fallback until the right GPU
+                    // target is seen at a matching sample timestamp.
                     std::vector<std::uint8_t> processed;
-                    const bool captured = EveDx11Capture::Consume(processed) &&
-                                          processed.size() == curLen;
-                    const BYTE* input = captured ? processed.data() : data;
+                    const bool directGpu = EverOnePass::Consume(processed) &&
+                                           processed.size() == curLen;
+                    const bool oldEve = !directGpu &&
+                        EveDx11Capture::Consume(processed) && processed.size() == curLen;
+                    const BYTE* input = (directGpu || oldEve) ? processed.data() : data;
                     if (!WriteAll(m_videoPipe, input, curLen))
                     {
                         logging::Error("[EditorEncoder] video pipe write failed (ffmpeg died?)");
@@ -373,6 +380,7 @@ namespace EditorEncoder
             if (m_blurSession)
             {
                 m_blurSession = false;
+                EverOnePass::End();
                 EveDx11Capture::Stop();
                 EditorExtraTimecycle::End();
                 EditorTimecycleBlur::SetExportActive(false);
