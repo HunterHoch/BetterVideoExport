@@ -13,6 +13,7 @@
 #include "GameVersion.h"
 #include "Logging.h"
 #include "Config.h"
+#include "ImportHook.h"
 
 #pragma comment(lib, "mfplat.lib")
 #pragma comment(lib, "mfuuid.lib")
@@ -435,18 +436,53 @@ namespace EditorEncoder
             return;
         }
 
-        MH_Initialize(); // harmless if already initialized elsewhere
+        // Prefer an IAT hook. MinHook's global thread freeze has returned
+        // MH_ERROR_MEMORY_ALLOC (9) inside FiveM's highly threaded subprocess.
+        // An import-pointer swap does not suspend the game's threads.
+        void* directOriginal = nullptr;
+        std::string iatDiagnostic;
+        if (ImportHook::Patch(GetModuleHandleW(nullptr), "mfreadwrite.dll",
+                              "MFCreateSinkWriterFromURL", target,
+                              (void*)&Hooked_Create, &directOriginal, iatDiagnostic))
+        {
+            g_origCreate = reinterpret_cast<MFCreateSinkWriterFromURL_t>(directOriginal);
+            logging::InfoF("[EditorEncoder] IAT hook ACTIVE: {}", iatDiagnostic);
+            return;
+        }
+        logging::WarningF("[EditorEncoder] IAT hook unavailable: {}; attempting MinHook fallback",
+                          iatDiagnostic);
+
+        const MH_STATUS init = MH_Initialize();
+        if (init != MH_OK && init != MH_ERROR_ALREADY_INITIALIZED)
+        {
+            logging::ErrorF("[EditorEncoder] MinHook initialization failed: {}",
+                            MH_StatusToString(init));
+            return;
+        }
         const MH_STATUS creation = MH_CreateHook(target, (void*)&Hooked_Create, (void**)&g_origCreate);
-        if (creation == MH_OK)
+        if (creation != MH_OK)
+        {
+            logging::ErrorF("[EditorEncoder] Inline hook creation failed: {}",
+                            MH_StatusToString(creation));
+            return;
+        }
+        // A transient thread snapshot failure can surface as status 9.
+        // Retry a bounded number of times rather than silently falling back.
+        for (int attempt = 1; attempt <= 3; ++attempt)
         {
             const MH_STATUS enabled = MH_EnableHook(target);
-            if (enabled == MH_OK)
-                logging::Info("[EditorEncoder] MFCreateSinkWriterFromURL hook active");
-            else
-                logging::ErrorF("[EditorEncoder] Hook enable failed, MinHook status={}", (int)enabled);
+            if (enabled == MH_OK || enabled == MH_ERROR_ENABLED)
+            {
+                logging::InfoF("[EditorEncoder] Inline MinHook ACTIVE (attempt {})", attempt);
+                return;
+            }
+            logging::WarningF("[EditorEncoder] Inline hook enable attempt {} failed: {}",
+                              attempt, MH_StatusToString(enabled));
+            if (enabled != MH_ERROR_MEMORY_ALLOC)
+                break;
+            Sleep(25);
         }
-        else
-            logging::ErrorF("[EditorEncoder] Hook creation failed, MinHook status={}", (int)creation);
+        logging::Error("[EditorEncoder] Encoder hook UNAVAILABLE. 4K60 export cannot use FFmpeg.");
     }
 }
 
