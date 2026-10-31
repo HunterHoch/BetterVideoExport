@@ -371,14 +371,28 @@ namespace EveDx11Capture
         s_width = w; s_height = h;
         s_presentCount = 0; s_eligibleCount = 0; s_capturedCount = 0; s_fallbackCount = 0;
         s_debugCapture = true;
-        s_request = true;
+        // Do not capture the EXPORT confirmation UI, loading color, or
+        // initialization frame before the first Media Foundation video sample.
+        // The first WriteSample arms capture for subsequent rendering.
+        s_request = false;
         s_active = true;
-        logging::InfoF("[EVE] Armed {}x{} EVE DX11 capture; waiting for render target and Present", w, h);
+        logging::Warning("[EVE] DXGI_PRESENT_TEST does NOT execute effects in current ReShade. This path is diagnostic-only unless EveDx11=2 is explicitly chosen.");
+        logging::InfoF("[EVE] Armed {}x{} GPU diagnostics; capture begins after first actual video sample", w, h);
     }
 
     bool Consume(std::vector<std::uint8_t>& nv12)
     {
         if (!s_active.load()) return false;
+        const unsigned mode = Config::GetUInt(L"Capture", L"EveDx11", 0);
+        // Mode 1 is a GPU diagnostic only. The old heuristic replaced good
+        // GTA frames with UI, cyan initialization frames and stale backbuffer
+        // images. ReShade explicitly skips DXGI_PRESENT_TEST, so treating
+        // those captures as post-effect frames was incorrect.
+        if (mode < 2)
+        {
+            s_request = true;
+            return false;
+        }
         bool got = false;
         {
             std::lock_guard<std::mutex> lock(s_mutex);
@@ -404,9 +418,10 @@ namespace EveDx11Capture
         if (!s_active.exchange(false)) return;
         std::lock_guard<std::mutex> lock(s_mutex);
         s_ready = false; s_nv12.clear(); s_request = false;
-        logging::InfoF("[EVE] Export ended: Present calls={}, output-size RT binds={}, GPU captures={}, fallback NV12 frames={}",
+        logging::InfoF("[EVE] Export ended: Present calls={}, output-size RT binds={}, GPU captures={}, fallback NV12 frames={}, mode={}",
             s_presentCount.load(), s_eligibleCount.load(),
-            s_capturedCount.load(), s_fallbackCount.load());
+            s_capturedCount.load(), s_fallbackCount.load(),
+            Config::GetUInt(L"Capture", L"EveDx11", 0));
     }
 }
 static HookFunction hookEveCapture([]()
