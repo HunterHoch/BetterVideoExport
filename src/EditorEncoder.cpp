@@ -351,6 +351,7 @@ namespace EditorEncoder
 
     static HRESULT STDAPICALLTYPE Hooked_Create(LPCWSTR url, IMFByteStream* bs, IMFAttributes* attr, IMFSinkWriter** out)
     {
+        logging::InfoF("[EditorEncoder] Sink writer requested: {}", Narrow(url ? std::wstring(url) : std::wstring(L"<null>")));
         if (url && EndsWithI(url, L".mp4"))
         {
             logging::InfoF("[EditorEncoder] MP4 export requested: {}", Narrow(url));
@@ -435,10 +436,17 @@ namespace EditorEncoder
         }
 
         MH_Initialize(); // harmless if already initialized elsewhere
-        if (MH_CreateHook(target, (void*)&Hooked_Create, (void**)&g_origCreate) == MH_OK)
-            MH_EnableHook(target);
+        const MH_STATUS creation = MH_CreateHook(target, (void*)&Hooked_Create, (void**)&g_origCreate);
+        if (creation == MH_OK)
+        {
+            const MH_STATUS enabled = MH_EnableHook(target);
+            if (enabled == MH_OK)
+                logging::Info("[EditorEncoder] MFCreateSinkWriterFromURL hook active");
+            else
+                logging::ErrorF("[EditorEncoder] Hook enable failed, MinHook status={}", (int)enabled);
+        }
         else
-            logging::Error("[EditorEncoder] failed to hook MFCreateSinkWriterFromURL");
+            logging::ErrorF("[EditorEncoder] Hook creation failed, MinHook status={}", (int)creation);
     }
 }
 
