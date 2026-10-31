@@ -1,6 +1,10 @@
 name: Fetch verified Windows FFmpeg dependency
 on:
   workflow_dispatch:
+  push:
+    branches: [feature/ever-native-onepass]
+    paths:
+      - ".github/workflows/fetch-ffmpeg-windows.yml"
 jobs:
   ffmpeg:
     runs-on: windows-2022
