@@ -241,13 +241,16 @@ namespace EditorEncoder
                                     GetLastError());
                         }
                     }
-                    // EVE-style mode: prefer the post-present GPU backbuffer
-                    // instead of GTA's pre-ReShade NV12 export sample. Keep the
-                    // original byte-exact input as fallback on any mismatch.
+                    // Use a GPU frame that has ACTUALLY passed through
+                    // ReShade's render_effects() during Rockstar's bake.
+                    // The previous implementation applied effects to GPU
+                    // memory, then always encoded the old GTA NV12 input.
                     std::vector<std::uint8_t> processed;
-                    const bool captured = EveDx11Capture::Consume(processed) &&
-                                          processed.size() == curLen;
-                    const BYTE* input = captured ? processed.data() : data;
+                    const bool bakedFx = NativeBakeBridge::ConsumeNV12(processed, m_w, m_h) &&
+                                         processed.size() == curLen;
+                    const bool legacyEve = !bakedFx &&
+                        EveDx11Capture::Consume(processed) && processed.size() == curLen;
+                    const BYTE* input = (bakedFx || legacyEve) ? processed.data() : data;
                     if (!WriteAll(m_videoPipe, input, curLen))
                     {
                         logging::Error("[EditorEncoder] video pipe write failed (ffmpeg died?)");
