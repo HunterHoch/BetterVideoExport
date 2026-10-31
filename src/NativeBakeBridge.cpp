@@ -60,12 +60,15 @@ namespace NativeBakeBridge {
         s_shared->height = static_cast<LONG>(h);
         s_shared->applyEffects = static_cast<LONG>(
             Config::GetUInt(L"ReShadeBake", L"ApplyEffects", 0));
+        s_shared->captureSnapshots = static_cast<LONG>(
+            Config::GetUInt(L"ReShadeBake", L"CaptureSnapshots", 0));
         s_shared->targetCandidate = static_cast<LONG>(
             Config::GetUInt(L"ReShadeBake", L"TargetCandidate", 0));
         s_shared->lastAppliedSample = -1;
         InterlockedExchange(&s_shared->active, 1);
-        logging::InfoF("[BakeFX] Export armed {}x{}: addon={}, apply={}, targetCandidate={} (0=only verified VideoEncode name)",
-            w, h, attached, s_shared->applyEffects, s_shared->targetCandidate);
+        logging::InfoF("[BakeFX] Export armed {}x{}: addon={}, apply={}, snapshots={}, targetCandidate={} (0=only verified VideoEncode name)",
+            w, h, attached, s_shared->applyEffects,
+            s_shared->captureSnapshots, s_shared->targetCandidate);
     }
 
     void OnVideoSample() {
@@ -88,9 +91,9 @@ namespace NativeBakeBridge {
             ? nativebake::MaxCandidates : s_shared->candidateCount);
         for (unsigned i = 0; i < count; ++i) {
             const auto& item = s_shared->candidates[i];
-            logging::InfoF("[BakeFX] Candidate {}: GPU=0x{:016X}, {}x{}, fmt={}, binds={}, effects={}, name={}",
+            logging::InfoF("[BakeFX] Candidate {}: GPU=0x{:016X}, {}x{}, fmt={}, binds={}, effects={}, snapshot={}, name={}",
                 i+1, item.resource, item.width, item.height, item.format,
-                item.bindCount, item.appliedCount, item.debugName[0] ? item.debugName : "<unnamed>");
+                item.bindCount, item.appliedCount, item.snapshotStatus, item.debugName[0] ? item.debugName : "<unnamed>");
         }
     }
 }
