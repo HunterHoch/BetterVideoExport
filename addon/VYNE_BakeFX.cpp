@@ -12,6 +12,7 @@
 #include <cstring>
 #include <cstdio>
 #include <algorithm>
+#include <string>
 
 using namespace reshade::api;
 
@@ -98,6 +99,108 @@ namespace {
         return count + 1;
     }
 
+
+    // Capture one GPU snapshot of every 2560x1440 8-bit BGRA candidate
+    // after real export samples have begun. We need visual proof of which
+    // target contains the actual scene BEFORE enabling render_effects.
+    // This does not modify the GPU resource, game image or encoder input.
+    bool WriteBmp(const wchar_t* path, const std::uint8_t* data,
+                  unsigned width, unsigned height, unsigned stride) {
+        HANDLE file = CreateFileW(path, GENERIC_WRITE, FILE_SHARE_READ,
+                                  nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (file == INVALID_HANDLE_VALUE) return false;
+        BITMAPFILEHEADER fileHeader{};
+        BITMAPINFOHEADER imageHeader{};
+        fileHeader.bfType = 0x4D42; // BM
+        fileHeader.bfOffBits = sizeof(fileHeader) + sizeof(imageHeader);
+        fileHeader.bfSize = fileHeader.bfOffBits + width * height * 4;
+        imageHeader.biSize = sizeof(imageHeader);
+        imageHeader.biWidth = static_cast<LONG>(width);
+        imageHeader.biHeight = -static_cast<LONG>(height); // top-down
+        imageHeader.biPlanes = 1;
+        imageHeader.biBitCount = 32;
+        imageHeader.biCompression = BI_RGB;
+        DWORD wrote = 0;
+        bool okay = WriteFile(file, &fileHeader, sizeof(fileHeader), &wrote, nullptr) &&
+                    wrote == sizeof(fileHeader);
+        okay = okay && WriteFile(file, &imageHeader, sizeof(imageHeader), &wrote, nullptr) &&
+               wrote == sizeof(imageHeader);
+        for (unsigned row = 0; row < height && okay; ++row) {
+            okay = WriteFile(file, data + static_cast<size_t>(row) * stride,
+                             width * 4, &wrote, nullptr) && wrote == width * 4;
+        }
+        CloseHandle(file);
+        if (!okay) DeleteFileW(path);
+        return okay;
+    }
+
+    bool SaveGpuSnapshot(command_list* cmd, resource gpuResource,
+                         LONG candidate, LONG sample) {
+        if (gpuResource.handle < 0x10000 || cmd->get_device()->get_api() != device_api::d3d11)
+            return false;
+        auto* srcResource = reinterpret_cast<ID3D11Resource*>(gpuResource.handle);
+        ID3D11Texture2D* src = nullptr;
+        if (FAILED(srcResource->QueryInterface(__uuidof(ID3D11Texture2D),
+                reinterpret_cast<void**>(&src))) || !src)
+            return false;
+        D3D11_TEXTURE2D_DESC desc{};
+        src->GetDesc(&desc);
+        if (desc.Format != DXGI_FORMAT_B8G8R8A8_UNORM ||
+            desc.SampleDesc.Count != 1 || desc.ArraySize != 1 ||
+            desc.MipLevels != 1) {
+            src->Release();
+            return false;
+        }
+        auto* ctx = reinterpret_cast<ID3D11DeviceContext*>(cmd->get_native());
+        if (!ctx) { src->Release(); return false; }
+        ID3D11Device* device = nullptr;
+        src->GetDevice(&device);
+        if (!device) { src->Release(); return false; }
+        D3D11_TEXTURE2D_DESC stageDesc = desc;
+        stageDesc.Usage = D3D11_USAGE_STAGING;
+        stageDesc.BindFlags = 0;
+        stageDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+        stageDesc.MiscFlags = 0;
+        ID3D11Texture2D* staging = nullptr;
+        const HRESULT createResult = device->CreateTexture2D(&stageDesc, nullptr, &staging);
+        bool saved = false;
+        if (SUCCEEDED(createResult) && staging) {
+            ctx->CopyResource(staging, src);
+            D3D11_MAPPED_SUBRESOURCE mapped{};
+            if (SUCCEEDED(ctx->Map(staging, 0, D3D11_MAP_READ, 0, &mapped))) {
+                wchar_t localAppData[MAX_PATH]{};
+                const DWORD count = GetEnvironmentVariableW(
+                    L"LOCALAPPDATA", localAppData, MAX_PATH);
+                std::wstring path;
+                if (count && count < MAX_PATH)
+                    path = std::wstring(localAppData) +
+                           L"\\FiveM\\FiveM.app\\plugins\\";
+                else {
+                    wchar_t temp[MAX_PATH]{};
+                    GetTempPathW(MAX_PATH, temp);
+                    path = temp;
+                }
+                path += L"VYNE_BakeFX_candidate" + std::to_wstring(candidate) +
+                        L"_sample" + std::to_wstring(sample) + L".bmp";
+                saved = WriteBmp(path.c_str(),
+                                 static_cast<const std::uint8_t*>(mapped.pData),
+                                 desc.Width, desc.Height, mapped.RowPitch);
+                ctx->Unmap(staging, 0);
+                if (saved) {
+                    char message[256];
+                    std::snprintf(message, sizeof(message),
+                        "[VYNE_BakeFX] Saved GPU candidate %ld at native sample %ld, %ux%u, as BMP in FiveM.app/plugins",
+                        candidate, sample, desc.Width, desc.Height);
+                    reshade::log::message(reshade::log::level::info, message);
+                }
+            }
+        }
+        if (staging) staging->Release();
+        device->Release();
+        src->Release();
+        return saved;
+    }
+
     // Called at the end of a render-target pass, before the app binds the
     // next RTV. The output-size check alone is diagnostic, NOT authorization
     // to draw effects. Selection requires an explicit candidate or a named
@@ -126,7 +229,23 @@ namespace {
             return;
         InterlockedIncrement(&p->eligibleBinds);
         const LONG candidate = RegisterCandidate(p, d, r, desc);
-        if (!candidate || !p->applyEffects) return;
+        if (!candidate) return;
+
+        // Only take one snapshot per BGRA candidate and only after ten
+        // genuine video samples. The snapshot is READ-ONLY and does not
+        // modify the ongoing export, unlike our old EVE frame substitution.
+        if (p->captureSnapshots && p->submittedSamples >= 10 &&
+            desc.texture.format == format::b8g8r8a8_unorm) {
+            auto& entry = p->candidates[candidate - 1];
+            if (InterlockedCompareExchange(&entry.snapshotStatus, 2, 0) == 0) {
+                const bool saved = SaveGpuSnapshot(cmd, r, candidate, p->submittedSamples);
+                InterlockedExchange(&entry.snapshotStatus, saved ? 1 : -1);
+                if (!saved)
+                    reshade::log::message(reshade::log::level::warning,
+                        "[VYNE_BakeFX] GPU snapshot failed; original export unaffected");
+            }
+        }
+        if (!p->applyEffects) return;
 
         const LONG wanted = p->targetCandidate ? p->targetCandidate : p->autoTarget;
         if (candidate != wanted) return;
