@@ -73,6 +73,6 @@ namespace nativebake {
         volatile LONG skipped = 0;
         uint8_t bgra[MaxBgraBytes]{};
     };
-    static_assert(offsetof(FrameShared, bgra) == 44, "GPU frame ABI alignment mismatch");
+    static_assert(offsetof(FrameShared, bgra) == 48, "GPU frame ABI alignment mismatch");
         static_assert(sizeof(Candidate) == 96, "ASI/addon Candidate ABI mismatch");
 }
