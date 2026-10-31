@@ -1,0 +1,47 @@
+name: Fetch verified Windows FFmpeg dependency
+on:
+  workflow_dispatch:
+jobs:
+  ffmpeg:
+    runs-on: windows-2022
+    steps:
+      - name: Download and verify Gyan FFmpeg 9.0.2 essentials
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $url = "https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-9.0.2-essentials_build.7z"
+          $expected = "4705843ccaaf54257c16ad90f3e952ece33c17df964ecf7bfdbb0f49c7171077"
+          $archive = Join-Path $env:RUNNER_TEMP "ffmpeg-essentials.7z"
+          $extract = Join-Path $env:RUNNER_TEMP "ffmpeg-expanded"
+          Invoke-WebRequest -Uri $url -OutFile $archive -MaximumRedirection 8
+          $actual = (Get-FileHash -Path $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          Write-Host "SHA256 $actual"
+          if ($actual -ne $expected) { throw "FFmpeg SHA256 mismatch; refusing to package an unverified download" }
+          $sevenZip = "C:\Program Files\7-Zip\7z.exe"
+          if (!(Test-Path $sevenZip)) { $sevenZip = "7z.exe" }
+          New-Item -ItemType Directory -Path $extract -Force | Out-Null
+          & $sevenZip x -y $archive "-o$extract"
+          if ($LASTEXITCODE -ne 0) { throw "7z extraction failed" }
+          $exe = @(Get-ChildItem $extract -Filter ffmpeg.exe -Recurse -File)
+          if ($exe.Count -ne 1) { throw "Expected exactly one ffmpeg.exe, found $($exe.Count)" }
+          New-Item -ItemType Directory -Path "dist" -Force | Out-Null
+          Copy-Item -LiteralPath $exe[0].FullName -Destination "dist\ffmpeg.exe"
+          & "dist\ffmpeg.exe" -hide_banner -encoders | Select-String -Pattern "h264_nvenc" | Select-Object -First 2
+          if ($LASTEXITCODE -ne 0) { throw "FFmpeg verification command failed" }
+          $license = @(Get-ChildItem $extract -Recurse -File | Where-Object { $_.Name -in @("LICENSE","COPYING.GPLv3","LICENSE.txt") })
+          if ($license.Count -gt 0) { Copy-Item $license[0].FullName "dist\FFmpeg-LICENSE.txt" }
+          @(
+            "FFmpeg Windows x64 essentials build 9.0.2"
+            "Publisher: https://www.gyan.dev/ffmpeg/builds/"
+            "Original release: $url"
+            "Original 7z SHA256: $expected"
+            "Source: https://github.com/FFmpeg/FFmpeg"
+            "Release source: https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz"
+            "Redistribution is subject to FFmpeg's GPLv3 / third-party terms."
+          ) | Set-Content -Path "dist\FFmpeg-PROVENANCE.txt"
+          Write-Host "FFmpeg binary size $((Get-Item 'dist\ffmpeg.exe').Length)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VYNE-Verified-FFmpeg-9.0.2-Windows64
+          path: dist/*
+          if-no-files-found: error
