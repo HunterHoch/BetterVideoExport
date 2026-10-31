@@ -206,6 +206,29 @@ namespace EditorEncoder
                         logging::InfoF("[EditorEncoder] First NV12 sample: {} bytes, expected {} bytes", curLen, expected);
                         if (curLen != expected)
                             logging::Warning("[EditorEncoder] Frame length differs from tightly packed NV12. FFmpeg may reject these samples.");
+
+                        // Diagnostic capture is the exact pre-FFmpeg input, not a screenshot
+                        // of the playback window. One frame only; never changes the video.
+                        if (Config::GetUInt(L"Diagnostics", L"DumpFirstNV12", 0) != 0 &&
+                            curLen == expected)
+                        {
+                            const std::wstring framePath = m_finalUrl + L".first-frame.nv12";
+                            HANDLE frameFile = CreateFileW(framePath.c_str(), GENERIC_WRITE,
+                                FILE_SHARE_READ, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+                            if (frameFile != INVALID_HANDLE_VALUE)
+                            {
+                                const bool saved = WriteAll(frameFile, data, curLen);
+                                CloseHandle(frameFile);
+                                if (saved)
+                                    logging::InfoF("[EditorEncoder] Pre-encoder frame dump saved: {} ({}x{}, NV12)",
+                                        Narrow(framePath), m_w, m_h);
+                                else
+                                    logging::Warning("[EditorEncoder] Failed to save complete pre-encoder NV12 frame");
+                            }
+                            else
+                                logging::WarningF("[EditorEncoder] Failed to create NV12 frame dump, Win32 error={}",
+                                    GetLastError());
+                        }
                     }
                     if (!WriteAll(m_videoPipe, data, curLen))
                     {
