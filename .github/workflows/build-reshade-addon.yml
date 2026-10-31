@@ -1,0 +1,41 @@
+name: Build VYNE ReShade bake add-on
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/reshade-native-bake
+    paths:
+      - "addon/**"
+      - "src/NativeBakeBridge.h"
+      - "premake_reshade.lua"
+      - ".github/workflows/build-reshade-addon.yml"
+
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch official ReShade SDK headers and state tracker
+        shell: pwsh
+        run: |
+          git clone --depth 1 https://github.com/crosire/reshade.git _deps/reshade
+          git -C _deps/reshade rev-parse HEAD
+      - uses: microsoft/setup-msbuild@v2
+      - name: Generate add-on project
+        shell: pwsh
+        run: .\premake5.exe --file=premake_reshade.lua vs2022
+      - name: Compile release x64 add-on
+        shell: pwsh
+        run: msbuild .\build-addon\VYNE_BakeFX.sln /m /p:Configuration=Release /p:Platform=x64
+      - name: Validate add-on output
+        shell: pwsh
+        run: |
+          $built = Get-ChildItem -Recurse -File -Filter VYNE_BakeFX.addon64
+          if (-not $built) { throw "ReShade add-on binary missing" }
+          $built | ForEach-Object { Write-Host $_.FullName }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VYNE-BakeFX-ReShade-addon64
+          path: "**/VYNE_BakeFX.addon64"
+          if-no-files-found: error
