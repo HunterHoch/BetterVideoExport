@@ -3,18 +3,22 @@
 #include "EditorExport.h"
 #include "Logging.h"
 #include "GameVersion.h"
+#include "MotionBlurPreset.h"
 
 #include <Windows.h>
 #include <exception>
 
 // Avoid doing logging, pattern scanning, or hook installation under
 // the Windows loader lock. Especially important when injected by FiveM.
+static HMODULE g_self = nullptr;
+
 static DWORD WINAPI InitializePlugin(LPVOID)
 {
     try
     {
         logging::Initialize("BetterVideoExport", "BetterVideoExport.log");
         logging::LogStartupBanner(gameversion::GetGameBuild());
+        MotionBlurPreset::InstallBundledPreset(g_self);
         HookFunctionBase::RunAll();
         OutputDebugStringA("[BetterVideoExport] Initialization finished.\n");
     }
@@ -35,6 +39,7 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID)
 {
     if (reason == DLL_PROCESS_ATTACH)
     {
+        g_self = module;
         DisableThreadLibraryCalls(module);
         HANDLE worker = CreateThread(nullptr, 0, InitializePlugin, nullptr, 0, nullptr);
         if (worker)
