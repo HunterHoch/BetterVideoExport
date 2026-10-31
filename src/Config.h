@@ -79,7 +79,7 @@ namespace Config
             "AudioArgs=-c:a aac -b:a 320k\r\n"
             "\r\n"
             "[MotionBlur]\r\n"
-            "; Automatically install Normal preset from this bundled ASI into FiveM.app/mods.\r\n"
+            "; Automatically install Normal preset from this bundled ASI into FiveM.app/addons.\r\n"
             "; Set to 0 to stop future installations (remove installed RPF manually to disable blur).\r\n"
             "AutoInstallNormalPreset=1\r\n";
 
